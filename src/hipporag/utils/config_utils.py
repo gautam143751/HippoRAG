@@ -3,7 +3,9 @@ from dataclasses import dataclass, field
 from typing import (
     Literal,
     Union,
-    Optional
+    Optional,
+    Dict,  # Added
+    Any    # Added
 )
 
 from .logging_utils import get_logger
@@ -66,7 +68,14 @@ class BaseConfig:
         default=False,
         metadata={"help": "If set to True, will ignore all existing openie files and rebuild them from scratch."}
     )
-
+    vector_store_type: str = field(
+        default="parquet",
+        metadata={"help": "Type of vector store to use (e.g., 'parquet', 'supabase', 'pinecone')."}
+    )
+    vector_store_config: Dict[str, Any] = field(
+        default_factory=dict,
+        metadata={"help": "Configuration dictionary for the chosen vector store."}
+    )
     # Storage specific attributes 
     force_index_from_scratch: bool = field(
         default=False,

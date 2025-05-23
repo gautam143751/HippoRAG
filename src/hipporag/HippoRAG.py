@@ -136,15 +136,50 @@ class HippoRAG:
             self.embedding_model: BaseEmbeddingModel = _get_embedding_model_class(
                 embedding_model_name=self.global_config.embedding_model_name)(global_config=self.global_config,
                                                                               embedding_model_name=self.global_config.embedding_model_name)
-        self.chunk_embedding_store = EmbeddingStore(self.embedding_model,
-                                                    os.path.join(self.working_dir, "chunk_embeddings"),
-                                                    self.global_config.embedding_batch_size, 'chunk')
-        self.entity_embedding_store = EmbeddingStore(self.embedding_model,
-                                                     os.path.join(self.working_dir, "entity_embeddings"),
-                                                     self.global_config.embedding_batch_size, 'entity')
-        self.fact_embedding_store = EmbeddingStore(self.embedding_model,
-                                                   os.path.join(self.working_dir, "fact_embeddings"),
-                                                   self.global_config.embedding_batch_size, 'fact')
+        
+        # Prepare vector_store_config, ensuring it's a new dict if None
+        base_vector_store_config = getattr(self.global_config, 'vector_store_config', {})
+        if base_vector_store_config is None: # Handle if config explicitly sets it to None
+            base_vector_store_config = {}
+
+        # Chunk Embedding Store
+        chunk_store_config = base_vector_store_config.copy()
+        if self.global_config.vector_store_type == 'parquet':
+            chunk_store_config["db_directory"] = os.path.join(self.working_dir, "chunk_embeddings")
+        
+        self.chunk_embedding_store = EmbeddingStore(
+            embedding_model=self.embedding_model,
+            namespace='chunk',
+            vector_store_type=self.global_config.vector_store_type,
+            vector_store_config=chunk_store_config,
+            batch_size=self.global_config.embedding_batch_size
+        )
+
+        # Entity Embedding Store
+        entity_store_config = base_vector_store_config.copy()
+        if self.global_config.vector_store_type == 'parquet':
+            entity_store_config["db_directory"] = os.path.join(self.working_dir, "entity_embeddings")
+
+        self.entity_embedding_store = EmbeddingStore(
+            embedding_model=self.embedding_model,
+            namespace='entity',
+            vector_store_type=self.global_config.vector_store_type,
+            vector_store_config=entity_store_config,
+            batch_size=self.global_config.embedding_batch_size
+        )
+
+        # Fact Embedding Store
+        fact_store_config = base_vector_store_config.copy()
+        if self.global_config.vector_store_type == 'parquet':
+            fact_store_config["db_directory"] = os.path.join(self.working_dir, "fact_embeddings")
+
+        self.fact_embedding_store = EmbeddingStore(
+            embedding_model=self.embedding_model,
+            namespace='fact',
+            vector_store_type=self.global_config.vector_store_type,
+            vector_store_config=fact_store_config,
+            batch_size=self.global_config.embedding_batch_size
+        )
 
         self.prompt_template_manager = PromptTemplateManager(role_mapping={"system": "system", "user": "user", "assistant": "assistant"})
 
@@ -292,8 +327,17 @@ class HippoRAG:
         docs_to_delete = [doc for doc in docs_to_delete if doc in current_docs]
 
         #Get ids for chunks to delete
-        chunk_ids_to_delete = set(
-            [self.chunk_embedding_store.text_to_hash_id[chunk] for chunk in docs_to_delete])
+        chunk_ids_to_delete = set()
+        for chunk in docs_to_delete:
+            chunk_id = self.chunk_embedding_store.get_hash_id_for_text(chunk)
+            if chunk_id:
+                chunk_ids_to_delete.add(chunk_id)
+            else:
+                logger.warning(f"Chunk '{chunk[:50]}...' not found in chunk_embedding_store, cannot delete its hash_id.")
+        
+        if not chunk_ids_to_delete:
+            logger.info("No valid chunk IDs found for deletion after checking the store.")
+            return
 
         #Find triples in chunks to delete
         all_openie_info, chunk_keys_to_process = self.load_existing_openie([])
@@ -324,13 +368,26 @@ class HippoRAG:
 
         processed_true_triples_to_delete = [[text_processing(list(triple)) for triple in true_triples_to_delete]]
         entities_to_delete, _ = extract_entity_nodes(processed_true_triples_to_delete)
-        processed_true_triples_to_delete = flatten_facts(processed_true_triples_to_delete)
+        processed_true_triples_to_delete = flatten_facts(processed_true_triples_to_delete) # This is List[Tuple]
 
-        triple_ids_to_delete = set([self.fact_embedding_store.text_to_hash_id[str(triple)] for triple in processed_true_triples_to_delete])
+        triple_ids_to_delete = set()
+        for triple_tuple in processed_true_triples_to_delete:
+            # Convert tuple to string as it was stored (assuming str(tuple) was used)
+            triple_id = self.fact_embedding_store.get_hash_id_for_text(str(triple_tuple))
+            if triple_id:
+                triple_ids_to_delete.add(triple_id)
+            else:
+                logger.warning(f"Triple '{str(triple_tuple)}' not found in fact_embedding_store during deletion.")
 
         #Filter out entities that appear in unaltered chunks
-        ent_ids_to_delete = [self.entity_embedding_store.text_to_hash_id[ent] for ent in entities_to_delete]
-
+        ent_ids_to_delete = []
+        for ent in entities_to_delete:
+            ent_id = self.entity_embedding_store.get_hash_id_for_text(ent)
+            if ent_id:
+                ent_ids_to_delete.append(ent_id)
+            else:
+                logger.warning(f"Entity '{ent}' not found in entity_embedding_store during deletion.")
+        
         filtered_ent_ids_to_delete = []
 
         for ent_node in ent_ids_to_delete:
