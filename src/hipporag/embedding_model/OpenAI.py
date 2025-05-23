@@ -115,3 +115,25 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
             results = (results.T / np.linalg.norm(results, axis=1)).T
 
         return results
+
+    def get_dimension(self) -> int:
+        """
+        Returns the dimension of the embeddings for the current OpenAI model.
+        Note: This might need to be made more robust if various OpenAI models with different dimensions are used.
+        """
+        # Example: "text-embedding-ada-002" has 1536 dimensions.
+        # Other models like "text-embedding-3-small" have 1536, "text-embedding-3-large" has 3072.
+        if self.embedding_model_name == "text-embedding-ada-002":
+            return 1536
+        elif self.embedding_model_name == "text-embedding-3-small":
+            return 1536
+        elif self.embedding_model_name == "text-embedding-3-large":
+            return 3072
+        # Add other OpenAI models and their dimensions as needed.
+        # A more robust solution might involve fetching this from model metadata if available
+        # or maintaining a more comprehensive mapping.
+        logger.warning(
+            f"Dimension for OpenAI model '{self.embedding_model_name}' is not explicitly mapped. "
+            f"Returning default 1536. Please update `get_dimension` if this is incorrect."
+        )
+        return 1536 # Default or raise error

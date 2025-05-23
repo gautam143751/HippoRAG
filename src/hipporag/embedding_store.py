@@ -1,179 +1,149 @@
-import numpy as np
-from tqdm import tqdm
 import os
-from typing import Union, Optional, List, Dict, Set, Any, Tuple, Literal
 import logging
-from copy import deepcopy
-import pandas as pd
+from typing import List, Dict, Any, Optional # Removed unused types like Union, Set, Tuple, Literal
 
-from .utils.misc_utils import compute_mdhash_id, NerRawOutput, TripleRawOutput
+# Removed numpy, tqdm, pandas, copy.deepcopy as they are likely handled by specific stores or not needed here.
+# Removed compute_mdhash_id, NerRawOutput, TripleRawOutput as hashing is delegated.
+
+from .vector_stores.base import VectorStore
+from .vector_stores.parquet import ParquetVectorStore
+from .vector_stores.supabase import SupabaseVectorStore
+from .vector_stores.pinecone_db import PineconeVectorStore
+# Assuming BaseEmbeddingModel is needed for type hinting embedding_model if it's accessed directly.
+# from .embedding_model.base import BaseEmbeddingModel 
 
 logger = logging.getLogger(__name__)
 
 class EmbeddingStore:
-    def __init__(self, embedding_model, db_filename, batch_size, namespace):
+    def __init__(self, 
+                 embedding_model: Any, # Or BaseEmbeddingModel if type hinting
+                 namespace: str,
+                 vector_store_type: str, 
+                 vector_store_config: Dict[str, Any],
+                 batch_size: int = 32, # Kept as it's passed to stores
+                 ):
         """
-        Initializes the class with necessary configurations and sets up the working directory.
+        Initializes the EmbeddingStore which acts as a factory and delegate for various vector stores.
 
         Parameters:
         embedding_model: The model used for embeddings.
-        db_filename: The directory path where data will be stored or retrieved.
-        batch_size: The batch size used for processing.
-        namespace: A unique identifier for data segregation.
-
-        Functionality:
-        - Assigns the provided parameters to instance variables.
-        - Checks if the directory specified by `db_filename` exists.
-          - If not, creates the directory and logs the operation.
-        - Constructs the filename for storing data in a parquet file format.
-        - Calls the method `_load_data()` to initialize the data loading process.
+        namespace: A unique identifier for data segregation, passed to the underlying store.
+        vector_store_type: Type of vector store to use (e.g., 'parquet', 'supabase', 'pinecone').
+        vector_store_config: Configuration dictionary for the chosen vector store.
+        batch_size: The batch size used for processing, passed to the underlying store.
         """
-        self.embedding_model = embedding_model
-        self.batch_size = batch_size
-        self.namespace = namespace
+        self.embedding_model = embedding_model # Stored if needed directly, else just passed
+        self.namespace = namespace # Stored if needed directly, else just passed
+        self.batch_size = batch_size # Stored as it's passed to stores
 
-        if not os.path.exists(db_filename):
-            logger.info(f"Creating working directory: {db_filename}")
-            os.makedirs(db_filename, exist_ok=True)
+        logger.info(f"Initializing EmbeddingStore with vector_store_type: {vector_store_type}")
 
-        self.filename = os.path.join(
-            db_filename, f"vdb_{self.namespace}.parquet"
-        )
-        self._load_data()
+        if vector_store_type == 'parquet':
+            db_directory = vector_store_config.get("db_directory", "./default_parquet_db/")
+            # ParquetVectorStore expects 'db_directory', not 'db_filename'
+            self.store: VectorStore = ParquetVectorStore(
+                embedding_model=self.embedding_model, 
+                db_directory=db_directory, 
+                batch_size=self.batch_size, 
+                namespace=self.namespace
+            )
+        elif vector_store_type == 'supabase':
+            supabase_url = vector_store_config.get("supabase_url")
+            supabase_key = vector_store_config.get("supabase_key")
+            table_name = vector_store_config.get("table_name", "embeddings") # Default table name
+            if not supabase_url or not supabase_key:
+                raise ValueError("Supabase URL and Key must be provided for Supabase vector store.")
+            self.store: VectorStore = SupabaseVectorStore(
+                embedding_model=self.embedding_model,
+                supabase_url=supabase_url,
+                supabase_key=supabase_key,
+                table_name=table_name,
+                batch_size=self.batch_size,
+                namespace=self.namespace
+            )
+        elif vector_store_type == 'pinecone':
+            pinecone_api_key = vector_store_config.get("pinecone_api_key")
+            pinecone_environment = vector_store_config.get("pinecone_environment")
+            index_name = vector_store_config.get("index_name", "hipporag-index") # Default index name
+            if not pinecone_api_key or not pinecone_environment:
+                raise ValueError("Pinecone API key and environment must be provided for Pinecone vector store.")
+            # PineconeVectorStore expects the actual embedding_model object
+            self.store: VectorStore = PineconeVectorStore(
+                embedding_model=self.embedding_model, 
+                pinecone_api_key=pinecone_api_key,
+                pinecone_environment=pinecone_environment,
+                index_name=index_name,
+                batch_size=self.batch_size,
+                namespace=self.namespace
+            )
+        else:
+            raise ValueError(f"Unknown vector_store_type: {vector_store_type}")
 
-    def get_missing_string_hash_ids(self, texts: List[str]):
-        nodes_dict = {}
+        logger.info(f"Successfully initialized backend vector store: {vector_store_type}")
 
-        for text in texts:
-            nodes_dict[compute_mdhash_id(text, prefix=self.namespace + "-")] = {'content': text}
-
-        # Get all hash_ids from the input dictionary.
-        all_hash_ids = list(nodes_dict.keys())
-        if not all_hash_ids:
-            return  {}
-
-        existing = self.hash_id_to_row.keys()
-
-        # Filter out the missing hash_ids.
-        missing_ids = [hash_id for hash_id in all_hash_ids if hash_id not in existing]
-        texts_to_encode = [nodes_dict[hash_id]["content"] for hash_id in missing_ids]
-
-        return {h: {"hash_id": h, "content": t} for h, t in zip(missing_ids, texts_to_encode)}
+    # Methods to be delegated to self.store
+    def get_missing_string_hash_ids(self, texts: List[str]) -> Dict[str, Dict[str, Any]]:
+        return self.store.get_missing_string_hash_ids(texts)
 
     def insert_strings(self, texts: List[str]):
-        nodes_dict = {}
+        # Return type is None as per VectorStore.insert_strings
+        self.store.insert_strings(texts)
+        return # Explicitly return None
 
-        for text in texts:
-            nodes_dict[compute_mdhash_id(text, prefix=self.namespace + "-")] = {'content': text}
+    def delete(self, hash_ids: List[str]):
+        # Return type is None
+        self.store.delete(hash_ids)
+        return # Explicitly return None
 
-        # Get all hash_ids from the input dictionary.
-        all_hash_ids = list(nodes_dict.keys())
-        if not all_hash_ids:
-            return  # Nothing to insert.
+    def get_row(self, hash_id: str) -> Optional[Dict[str, Any]]:
+        return self.store.get_row(hash_id)
 
-        existing = self.hash_id_to_row.keys()
+    # get_hash_id was specific to the old implementation's text_to_hash_id map
+    # This functionality is now internal to each VectorStore or not directly exposed
+    # def get_hash_id(self, text: str) -> Optional[str]:
+    #     # This would require the specific store to implement such a method if needed.
+    #     # For now, removing as it's not part of the VectorStore ABC.
+    #     # if hasattr(self.store, 'get_hash_id_for_text'): # Example of conditional delegation
+    #     #     return self.store.get_hash_id_for_text(text)
+    #     logger.warning("'get_hash_id' is not a standard VectorStore method and has been removed.")
+    #     return None
 
-        # Filter out the missing hash_ids.
-        missing_ids = [hash_id for hash_id in all_hash_ids if hash_id not in existing]
+    def get_rows(self, hash_ids: List[str], dtype: Optional[Any] = None) -> Dict[str, Dict[str, Any]]:
+        # The 'dtype' parameter was specific to the old Parquet implementation's get_embeddings.
+        # For get_rows, it's not standard. VectorStore.get_rows doesn't specify dtype.
+        # If concrete stores need dtype for their get_rows, they should handle it or it should be part of their config.
+        if dtype is not None:
+            logger.warning("The 'dtype' parameter for get_rows is deprecated in EmbeddingStore and may not be used by the underlying vector store.")
+        return self.store.get_rows(hash_ids)
 
-        logger.info(
-            f"Inserting {len(missing_ids)} new records, {len(all_hash_ids) - len(missing_ids)} records already exist.")
+    def get_all_ids(self) -> List[str]:
+        return self.store.get_all_ids()
 
-        if not missing_ids:
-            return  {}# All records already exist.
+    def get_all_id_to_rows(self) -> Dict[str, Dict[str, Any]]:
+        return self.store.get_all_id_to_rows()
 
-        # Prepare the texts to encode from the "content" field.
-        texts_to_encode = [nodes_dict[hash_id]["content"] for hash_id in missing_ids]
+    def get_all_texts(self) -> List[str]: # VectorStore ABC defines this as returning List[str]
+        return self.store.get_all_texts()
 
-        missing_embeddings = self.embedding_model.batch_encode(texts_to_encode)
-
-        self._upsert(missing_ids, texts_to_encode, missing_embeddings)
-
-    def _load_data(self):
-        if os.path.exists(self.filename):
-            df = pd.read_parquet(self.filename)
-            self.hash_ids, self.texts, self.embeddings = df["hash_id"].values.tolist(), df["content"].values.tolist(), df["embedding"].values.tolist()
-            self.hash_id_to_idx = {h: idx for idx, h in enumerate(self.hash_ids)}
-            self.hash_id_to_row = {
-                h: {"hash_id": h, "content": t}
-                for h, t in zip(self.hash_ids, self.texts)
-            }
-            self.hash_id_to_text = {h: self.texts[idx] for idx, h in enumerate(self.hash_ids)}
-            self.text_to_hash_id = {self.texts[idx]: h  for idx, h in enumerate(self.hash_ids)}
-            assert len(self.hash_ids) == len(self.texts) == len(self.embeddings)
-            logger.info(f"Loaded {len(self.hash_ids)} records from {self.filename}")
+    def get_embedding(self, hash_id: str, dtype: Optional[Any] = None) -> Optional[np.ndarray]:
+        # The 'dtype' parameter for get_embedding might be specific to some stores.
+        # The VectorStore ABC for get_embedding is (self, hash_id: str) -> Any.
+        # ParquetVectorStore implemented it with dtype. Supabase/Pinecone return np.ndarray already.
+        # For consistency, if a store supports dtype, it should be passed.
+        # We can pass it as a kwarg if the underlying store supports it.
+        if hasattr(self.store, 'get_embedding') and 'dtype' in self.store.get_embedding.__code__.co_varnames:
+             return self.store.get_embedding(hash_id, dtype=dtype) # type: ignore
         else:
-            self.hash_ids, self.texts, self.embeddings = [], [], []
-            self.hash_id_to_idx, self.hash_id_to_row = {}, {}
+            if dtype is not None:
+                 logger.warning(f"Store {type(self.store)} does not support 'dtype' for get_embedding. Ignoring.")
+            return self.store.get_embedding(hash_id)
 
-    def _save_data(self):
-        data_to_save = pd.DataFrame({
-            "hash_id": self.hash_ids,
-            "content": self.texts,
-            "embedding": self.embeddings
-        })
-        data_to_save.to_parquet(self.filename, index=False)
-        self.hash_id_to_row = {h: {"hash_id": h, "content": t} for h, t, e in zip(self.hash_ids, self.texts, self.embeddings)}
-        self.hash_id_to_idx = {h: idx for idx, h in enumerate(self.hash_ids)}
-        self.hash_id_to_text = {h: self.texts[idx] for idx, h in enumerate(self.hash_ids)}
-        self.text_to_hash_id = {self.texts[idx]: h for idx, h in enumerate(self.hash_ids)}
-        logger.info(f"Saved {len(self.hash_ids)} records to {self.filename}")
 
-    def _upsert(self, hash_ids, texts, embeddings):
-        self.embeddings.extend(embeddings)
-        self.hash_ids.extend(hash_ids)
-        self.texts.extend(texts)
-
-        logger.info(f"Saving new records.")
-        self._save_data()
-
-    def delete(self, hash_ids):
-        indices = []
-
-        for hash in hash_ids:
-            indices.append(self.hash_id_to_idx[hash])
-
-        sorted_indices = np.sort(indices)[::-1]
-
-        for idx in sorted_indices:
-            self.hash_ids.pop(idx)
-            self.texts.pop(idx)
-            self.embeddings.pop(idx)
-
-        logger.info(f"Saving record after deletion.")
-        self._save_data()
-
-    def get_row(self, hash_id):
-        return self.hash_id_to_row[hash_id]
-
-    def get_hash_id(self, text):
-        return self.text_to_hash_id[text]
-
-    def get_rows(self, hash_ids, dtype=np.float32):
-        if not hash_ids:
-            return {}
-
-        results = {id : self.hash_id_to_row[id] for id in hash_ids}
-
-        return results
-
-    def get_all_ids(self):
-        return deepcopy(self.hash_ids)
-
-    def get_all_id_to_rows(self):
-        return deepcopy(self.hash_id_to_row)
-
-    def get_all_texts(self):
-        return set(row['content'] for row in self.hash_id_to_row.values())
-
-    def get_embedding(self, hash_id, dtype=np.float32) -> np.ndarray:
-        return self.embeddings[self.hash_id_to_idx[hash_id]].astype(dtype)
-    
-    def get_embeddings(self, hash_ids, dtype=np.float32) -> list[np.ndarray]:
-        if not hash_ids:
-            return []
-
-        indices = np.array([self.hash_id_to_idx[h] for h in hash_ids], dtype=np.intp)
-        embeddings = np.array(self.embeddings, dtype=dtype)[indices]
-
-        return embeddings
+    def get_embeddings(self, hash_ids: List[str], dtype: Optional[Any] = None) -> List[Optional[Any]]: # VectorStore.get_embeddings returns List[Any]
+        # Similar to get_embedding, handle dtype if the store supports it.
+        if hasattr(self.store, 'get_embeddings') and 'dtype' in self.store.get_embeddings.__code__.co_varnames:
+            return self.store.get_embeddings(hash_ids, dtype=dtype) # type: ignore
+        else:
+            if dtype is not None:
+                logger.warning(f"Store {type(self.store)} does not support 'dtype' for get_embeddings. Ignoring.")
+            return self.store.get_embeddings(hash_ids)

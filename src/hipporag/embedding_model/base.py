@@ -104,6 +104,7 @@ class EmbeddingConfig:
         return json.dumps(self._data, indent=4)
     
 
+from abc import ABC, abstractmethod # Added import
 from filelock import FileLock
 import sqlite3
 import hashlib
@@ -186,7 +187,7 @@ def make_cache_embed(encode_func, cache_file_name, device):
 
     return wrapper
     
-class BaseEmbeddingModel:
+class BaseEmbeddingModel(ABC): # Added ABC
     global_config: BaseConfig
     embedding_model_name: str # Class name indicating which embedding model to use.
     embedding_config: EmbeddingConfig
@@ -207,6 +208,11 @@ class BaseEmbeddingModel:
 
     def batch_encode(self, texts: List[str], **kwargs) -> None:
         raise NotImplementedError
+
+    @abstractmethod
+    def get_dimension(self) -> int:
+        """Returns the dimension of the embeddings produced by this model."""
+        pass
     
     
     def get_query_doc_scores(self, query_vec: np.ndarray, doc_vecs: np.ndarray):
