@@ -1,0 +1,3 @@
+from .s3_connector import get_documents_from_s3
+from .confluence_connector import get_documents_from_confluence
+from .sharepoint_connector import get_documents_from_sharepoint

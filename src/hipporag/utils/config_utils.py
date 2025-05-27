@@ -57,6 +57,7 @@ class BaseConfig:
         default_factory=lambda: { "type": "json_object" },
         metadata={"help": "Specifying the format that the model must output."}
     )
+    openrouter_api_key: Optional[str] = None
     
     ## LLM specific attributes -> Async hyperparameters
     max_retry_attempts: int = field(
@@ -238,3 +239,5 @@ class BaseConfig:
             if self.dataset is None: self.save_dir = 'outputs' # running freely
             else: self.save_dir = os.path.join('outputs', self.dataset) # customize your dataset's output dir here
         logger.debug(f"Initializing the highest level of save_dir to be {self.save_dir}")
+        if self.openrouter_api_key is None:
+            self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")

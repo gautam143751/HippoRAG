@@ -13,3 +13,11 @@ numpy
 scipy
 tqdm
 einops
+boto3
+PyPDF2
+python-docx
+atlassian-python-api
+Office365-REST-Python-Client
+streamlit
+pytest
+pytest-mock

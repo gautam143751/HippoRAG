@@ -52,6 +52,18 @@ Initialize the environmental variables and activate the environment:
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 export HF_HOME=<path to Huggingface home directory>
 export OPENAI_API_KEY=<your openai api key>   # if you want to use OpenAI model
+# For OpenRouter
+export OPENROUTER_API_KEY=<your openrouter api key>
+# For Data Connectors (examples)
+export AWS_ACCESS_KEY_ID=<your aws access key>
+export AWS_SECRET_ACCESS_KEY=<your aws secret key>
+export AWS_DEFAULT_REGION=<your aws region>
+export CONFLUENCE_URL=<your confluence url>
+export CONFLUENCE_USERNAME=<your confluence username/email>
+export CONFLUENCE_API_TOKEN=<your confluence api token>
+export SHAREPOINT_URL=<your sharepoint site url>
+export SHAREPOINT_USERNAME=<your sharepoint username/email>
+export SHAREPOINT_PASSWORD=<your sharepoint password>
 
 conda activate hipporag
 ```
@@ -134,6 +146,22 @@ hipporag = HippoRAG(save_dir=save_dir,
     llm_base_url='Your LLM Model url',
     embedding_model_name='Your Embedding model name',  
     embedding_base_url='Your Embedding model url')
+```
+
+#### Example (OpenRouter)
+
+HippoRAG supports using [OpenRouter](https://openrouter.ai/) as an LLM provider. To configure it:
+1. Set `llm_base_url` to `https://openrouter.ai/api/v1`.
+2. Provide your OpenRouter API key via the `openrouter_api_key` parameter in `HippoRAG` or by setting the `OPENROUTER_API_KEY` environment variable.
+3. Use the appropriate `llm_name` for OpenRouter, which often includes the original provider, e.g., `openai/gpt-4o`, `anthropic/claude-3-opus`.
+
+```python
+hipporag = HippoRAG(save_dir=save_dir,
+                    llm_name="openai/gpt-4o", # Example OpenRouter model
+                    llm_base_url="https://openrouter.ai/api/v1",
+                    openrouter_api_key="ork-...", # Or set OPENROUTER_API_KEY env var
+                    embedding_model_name=embedding_model_name)
+# Indexing and Q&A proceed as usual
 ```
 
 ### Local Deployment (vLLM)
@@ -294,6 +322,74 @@ python main.py --dataset $dataset --llm_name meta-llama/Llama-3.3-70B-Instruct -
 rm reproduce/dataset/openie_results/openie_sample_results_ner_meta-llama_Llama-3.3-70B-Instruct_3.json
 rm -rf outputs/sample/sample_meta-llama_Llama-3.3-70B-Instruct_nvidia_NV-Embed-v2
 ```
+
+## Interactive Streamlit Application
+
+HippoRAG now includes an interactive Streamlit application for easy experimentation!
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/OSU-NLP-Group/HippoRAG/main/images/streamlit_demo_screenshot.png" alt="Streamlit App Screenshot" width="70%">
+</p>
+
+**To run the application:**
+
+1.  Ensure all dependencies are installed (see New Dependencies section below).
+2.  Set up necessary environment variables for API keys (OpenAI, OpenRouter, Azure) and data source credentials if you plan to use those services. These can also be entered directly in the UI.
+3.  Run the following command from the root of the repository:
+    ```sh
+    streamlit run streamlit_app.py
+    ```
+
+**Capabilities:**
+
+*   **Configuration:** Interactively set LLM provider (OpenAI, Azure, OpenRouter), API keys, model names, and embedding model details.
+*   **Data Loading:**
+    *   Input documents directly via text area.
+    *   Connect to **S3 buckets**, **Confluence spaces/pages (via CQL)**, or **SharePoint sites/document libraries** to fetch documents.
+    *   Credentials for data sources can be entered in the UI or pre-configured via environment variables.
+*   **Indexing:** Index the loaded documents with the configured HippoRAG instance.
+*   **Question Answering:** Ask questions based on the indexed documents and view answers along with retrieved source documents.
+
+## Data Source Connectors
+
+HippoRAG can now directly ingest documents from various sources:
+
+*   **Amazon S3:** Fetch text, PDF, and DOCX files from specified S3 buckets and prefixes.
+    *   Requires AWS credentials (e.g., `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`) to be configured in your environment or passed if using the connectors directly (though the Streamlit app is the primary interface).
+*   **Confluence:** Fetch pages from a Confluence space or using a CQL query. Extracts text from pages and, optionally, from attached TXT/PDF files.
+    *   Requires Confluence URL, username/email, and API token (e.g., `CONFLUENCE_URL`, `CONFLUENCE_USERNAME`, `CONFLUENCE_API_TOKEN`).
+*   **SharePoint:** Fetch text, PDF, and DOCX files from a SharePoint document library and optional folder path.
+    *   Requires SharePoint site URL, username, and password (e.g., `SHAREPOINT_URL`, `SHAREPOINT_USERNAME`, `SHAREPOINT_PASSWORD`).
+
+While these connectors can be used programmatically (they are available in `src.hipporag.data_connectors`), the Streamlit application provides a user-friendly interface to configure and use them.
+
+```python
+# Example of direct usage (less common, Streamlit app is preferred for ease of use)
+# from src.hipporag.data_connectors import get_documents_from_s3, get_documents_from_confluence, get_documents_from_sharepoint
+# s3_docs = get_documents_from_s3(bucket_name="my-bucket", prefix="docs/") 
+# confluence_docs = get_documents_from_confluence(confluence_url="...", username="...", api_token="...", space_key="MYSPACE")
+# sharepoint_docs = get_documents_from_sharepoint(sharepoint_url="...", username="...", password="...", document_library_name="Documents")
+
+# Then, these docs can be passed to hipporag.index(docs=...)
+```
+
+## New Dependencies
+
+Several new dependencies have been added to support the data connectors and the Streamlit application. Ensure you have them installed, typically by reinstalling or updating with the provided `requirements.txt`:
+
+```sh
+pip install -r requirements.txt
+```
+
+Key new dependencies include:
+
+*   `streamlit`: For the interactive web application.
+*   `boto3`: For the AWS S3 data connector.
+*   `atlassian-python-api`: For the Confluence data connector.
+*   `Office365-REST-Python-Client`: For the SharePoint data connector.
+*   `PyPDF2`: For parsing PDF files (used by S3, Confluence, SharePoint connectors).
+*   `python-docx`: For parsing DOCX files (used by S3, SharePoint connectors).
+
 ### Custom Datasets
 
 To setup your own custom dataset for evaluation, follow the format and naming convention shown in `reproduce/dataset/sample_corpus.json` (your dataset's name should be followed by `_corpus.json`). If running an experiment with pre-defined questions, organize your query corpus according to the query file `reproduce/dataset/sample.json`, be sure to also follow our naming convention.
@@ -399,6 +495,7 @@ When preparing your data, you may need to chunk each passage, as longer passage 
 │   ├── ...
 │-- 📜 README.md
 │-- 📜 requirements.txt   # Dependencies list
+│-- 📜 streamlit_app.py   # Interactive Streamlit application
 │-- 📜 .gitignore         # Files to exclude from Git
 
 
@@ -444,6 +541,8 @@ If you find this work useful, please consider citing our papers:
 
 - [x] Add support for more embedding models
 - [x] Add support for embedding endpoints
+- [x] Add Data Source Connectors (S3, Confluence, SharePoint)
+- [x] Add Interactive Streamlit Application
 - [ ] Add support for vector database integration
 
 Please feel free to open an issue or PR if you have any questions or suggestions.
